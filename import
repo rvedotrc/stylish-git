@@ -1,0 +1,56 @@
+#!/usr/bin/env ruby
+
+require 'fileutils'
+require 'json'
+require 'sqlite3'
+
+db_file = ARGV.first
+db_file ||= Dir.glob("#{ENV["HOME"]}/Library/Application Support/Firefox/Profiles/*.default/stylish.sqlite").first
+
+db = SQLite3::Database.new db_file, :results_as_hash => true
+
+db.transaction do
+
+  styles = db.execute("select * from styles")
+  style_meta = db.execute("select * from style_meta")
+
+  Dir.glob("var/*.json").each do |json_file|
+    data = JSON.parse(IO.read json_file)
+    css = IO.read(json_file.sub ".json", ".css").chomp
+
+    name = data["style"]["name"]
+    find_by_name = styles.find {|s| s["name"] == name}
+
+    if find_by_name
+      styles.delete_if {|s| s["id"] == find_by_name["id"]}
+      # TODO update other columns
+      db.execute("update styles set code=? where id=?", css, find_by_name["id"])
+      # TODO update style_meta
+    else
+      style = data["style"]
+      style["code"] = css
+      puts "insert into styles (#{style.keys.join ","}) values (#{style.values.map {"?"}.join ","})"
+      p style.values
+      db.execute(
+        "insert into styles (#{style.keys.join ","}) values (#{style.values.map {"?"}.join ","})",
+        *style.values,
+      )
+      style_id = db.execute("select id from styles where name=?", name)[0][0]
+      p style_id
+
+      data["meta"].each do |meta|
+        meta["style_id"] = style_id
+        db.execute(
+          "insert into style_meta (#{meta.keys.join ","}) values (#{meta.values.map {"?"}.join ","})",
+          *meta.values,
+        )
+      end
+    end
+  end
+
+  styles.each do |s|
+    db.execute("delete from style_meta where style_id = ?", s["id"])
+    db.execute("delete from styles where id = ?", s["id"])
+  end
+
+end

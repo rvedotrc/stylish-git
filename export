@@ -1,0 +1,53 @@
+#!/usr/bin/env ruby
+
+require 'fileutils'
+require 'json'
+require 'sqlite3'
+
+db_file = ARGV.first
+db_file ||= Dir.glob("#{ENV["HOME"]}/Library/Application Support/Firefox/Profiles/*.default/stylish.sqlite").first
+
+db = SQLite3::Database.new db_file, :results_as_hash => true
+
+styles = style_meta = nil
+db.transaction do
+  styles = db.execute("select * from styles")
+  style_meta = db.execute("select * from style_meta")
+end
+
+#p styles
+#p style_meta
+
+FileUtils.mkdir_p "./var"
+FileUtils.rm_rf Dir.glob("./var/*")
+
+styles.each do |style|
+  metas = style_meta.select {|m| m["style_id"] == style["id"]}
+
+  id = begin
+    m = style["code"].match(/\/\* stylish-git-id=(.*?) \*\//)
+    if m
+      m[1]
+    else
+      style["name"]
+    end
+  end
+
+  code = style.delete "code"
+  style.delete "id"
+  style.keys.each {|k| style.delete k if k.kind_of? Numeric}
+
+  metas.each do |m|
+    m.delete "id"
+    m.delete "style_id"
+    m.keys.each {|k| m.delete k if k.kind_of? Numeric}
+  end
+
+  json = {
+    style: style,
+    meta: metas,
+  }
+
+  IO.write "./var/#{id}.css", code+"\n"
+  IO.write "./var/#{id}.json", JSON.pretty_generate(json)+"\n"
+end
